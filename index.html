@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Rich Editor Lab</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      /* Hide the native caret to allow our custom one to shine */
+      .custom-caret-editor {
+        caret-color: transparent;
+      }
+      
+      /* Ensure atomic elements (images, inputs) behave nicely */
+      .editor-atomic {
+        display: inline-block;
+        user-select: none;
+        vertical-align: middle;
+      }
+
+      /* Simple blink animation for the custom caret */
+      @keyframes blink {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0; }
+      }
+      .animate-custom-blink {
+        animation: blink 1s step-end infinite;
+      }
+      
+      /* Reset generic table styles for the editor content */
+      .prose-editor table {
+        border-collapse: collapse;
+        width: 100%;
+        margin: 1em 0;
+      }
+      .prose-editor td, .prose-editor th {
+        border: 1px solid #d1d5db;
+        padding: 0.5em;
+      }
+    </style>
+  <script type="importmap">
+{
+  "imports": {
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.1/",
+    "lucide-react": "https://aistudiocdn.com/lucide-react@^0.556.0",
+    "react/": "https://aistudiocdn.com/react@^19.2.1/",
+    "react": "https://aistudiocdn.com/react@^19.2.1"
+  }
+}
+</script>
+</head>
+  <body class="bg-gray-50 text-gray-900 antialiased">
+    <div id="root"></div>
+  </body>
+</html>

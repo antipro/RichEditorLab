@@ -1,0 +1,7 @@
+{
+  "name": "Rich Editor Lab",
+  "description": "A sophisticated rich text editor featuring a custom-rendered blinking caret, support for embedded form controls, table drawing, and image insertion.",
+  "requestFramePermissions": [
+    "clipboard-read"
+  ]
+}
