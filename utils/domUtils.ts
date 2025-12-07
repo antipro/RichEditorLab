@@ -1,3 +1,4 @@
+
 /**
  * Inserts a DOM node at the current selection range.
  */
@@ -90,9 +91,12 @@ export const getCaretCoordinates = (editorEl: HTMLElement) => {
 
   const editorRect = editorEl.getBoundingClientRect();
 
+  // Return coordinates relative to the viewport (visible top-left of the editor)
+  // We do NOT add scrollTop/scrollLeft because the CustomCaret is overlaid 
+  // on the viewport, not placed inside the scrolling document content.
   return {
-    top: rect.top - editorRect.top + editorEl.scrollTop,
-    left: rect.left - editorRect.left + editorEl.scrollLeft,
+    top: rect.top - editorRect.top,
+    left: rect.left - editorRect.left,
     height: rect.height || 20 // Default height if 0
   };
 };

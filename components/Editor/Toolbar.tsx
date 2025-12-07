@@ -19,7 +19,9 @@ import {
   BetweenHorizontalStart,
   Type,
   Highlighter,
-  ALargeSmall
+  ALargeSmall,
+  Undo,
+  Redo
 } from 'lucide-react';
 import { EditorAction } from '../../types';
 
@@ -112,7 +114,12 @@ const Toolbar: React.FC<ToolbarProps> = ({ onAction }) => {
         onChange={(e) => handleColorChange('back-color', e)}
       />
 
-      <div className="flex items-center gap-2 pr-2 border-r border-gray-200">
+      <div className="flex items-center gap-0.5 pr-2 border-r border-gray-200">
+        <Button tool="undo" icon={Undo} label="Undo" />
+        <Button tool="redo" icon={Redo} label="Redo" />
+      </div>
+
+      <div className="flex items-center gap-2 px-2 border-r border-gray-200">
         <select
           className="h-8 border border-gray-200 rounded text-sm text-gray-600 focus:outline-none bg-white px-2 cursor-pointer hover:bg-gray-50 w-32"
           onChange={(e) => {
@@ -129,13 +136,13 @@ const Toolbar: React.FC<ToolbarProps> = ({ onAction }) => {
         </select>
       </div>
 
-      <div className="flex items-center gap-0.5 pr-2 border-r border-gray-200">
+      <div className="flex items-center gap-0.5 px-2 border-r border-gray-200">
         <Button tool="bold" icon={Bold} label="Bold" />
         <Button tool="italic" icon={Italic} label="Italic" />
         <Button tool="underline" icon={Underline} label="Underline" />
       </div>
 
-      <div className="flex items-center gap-0.5 pr-2 border-r border-gray-200">
+      <div className="flex items-center gap-0.5 px-2 border-r border-gray-200">
          <Button 
             icon={Type} 
             label="Text Color" 
@@ -148,7 +155,7 @@ const Toolbar: React.FC<ToolbarProps> = ({ onAction }) => {
          />
       </div>
 
-      <div className="flex items-center gap-0.5 pr-2 border-r border-gray-200">
+      <div className="flex items-center gap-0.5 px-2 border-r border-gray-200">
         <Button tool="align-left" icon={AlignLeft} label="Left" />
         <Button tool="align-center" icon={AlignCenter} label="Center" />
         <Button tool="align-right" icon={AlignRight} label="Right" />

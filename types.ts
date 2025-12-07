@@ -7,6 +7,8 @@ export interface CaretPosition {
 }
 
 export type EditorTool = 
+  | 'undo'
+  | 'redo'
   | 'bold' 
   | 'italic' 
   | 'underline' 

@@ -43,9 +43,14 @@ const EXAMPLE_CONTENT = `
 const RichEditor: React.FC = () => {
   const editorRef = useRef<HTMLDivElement>(null);
   const lastRangeRef = useRef<Range | null>(null);
+  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   const [caret, setCaret] = useState<CaretPosition>({ top: 0, left: 0, height: 20, visible: false });
   const [htmlContent, setHtmlContent] = useState<string>(''); 
+
+  // History State
+  const [history, setHistory] = useState<string[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(0);
 
   // Context Menu State
   const [contextMenu, setContextMenu] = useState<{
@@ -78,9 +83,34 @@ const RichEditor: React.FC = () => {
   useEffect(() => {
     if (editorRef.current) {
       editorRef.current.innerHTML = EXAMPLE_CONTENT;
-      setHtmlContent(editorRef.current.innerHTML);
+      const initialContent = editorRef.current.innerHTML;
+      setHtmlContent(initialContent);
+      setHistory([initialContent]);
+      setHistoryIndex(0);
     }
   }, []);
+
+  // Save History Helper
+  const saveHistory = useCallback((content: string) => {
+    setHistory(prev => {
+        // If content hasn't changed from the current point in history, don't duplicate
+        if (prev[historyIndex] === content) return prev;
+        
+        // Slice history up to current index and add new content
+        const newHistory = [...prev.slice(0, historyIndex + 1), content];
+        
+        // Optional: limit stack size
+        if (newHistory.length > 50) {
+            newHistory.shift();
+            // Adjust index if we shifted
+            setHistoryIndex(newHistory.length - 1);
+            return newHistory;
+        }
+
+        setHistoryIndex(newHistory.length - 1);
+        return newHistory;
+    });
+  }, [historyIndex]);
 
   // Update Caret and Save Range
   const updateCaret = useCallback(() => {
@@ -140,13 +170,15 @@ const RichEditor: React.FC = () => {
           
           if (editorRef.current) {
              editorRef.current.style.cursor = 'text';
-             setHtmlContent(editorRef.current.innerHTML);
+             const content = editorRef.current.innerHTML;
+             setHtmlContent(content);
+             saveHistory(content);
           }
           
           document.removeEventListener('mousemove', handleGlobalMouseMove);
           document.removeEventListener('mouseup', handleGlobalMouseUp);
       }
-  }, [handleGlobalMouseMove]);
+  }, [handleGlobalMouseMove, saveHistory]);
 
   // Editor Mouse Interactions (Hover detection & Start Drag)
   const handleEditorMouseMove = (e: React.MouseEvent) => {
@@ -258,6 +290,18 @@ const RichEditor: React.FC = () => {
       }
   };
 
+  const restoreCaretToEnd = () => {
+      if (editorRef.current) {
+          const range = document.createRange();
+          range.selectNodeContents(editorRef.current);
+          range.collapse(false);
+          const sel = window.getSelection();
+          sel?.removeAllRanges();
+          sel?.addRange(range);
+          updateCaret();
+      }
+  };
+
   const getSelectionBlock = (): HTMLElement | null => {
       const selection = window.getSelection();
       if (!selection || selection.rangeCount === 0) return null;
@@ -297,8 +341,38 @@ const RichEditor: React.FC = () => {
   };
 
   const handleAction = (action: EditorAction) => {
+    // For Undo/Redo we handle history navigation differently
+    if (action.type === 'undo') {
+        if (historyIndex > 0) {
+            const newIndex = historyIndex - 1;
+            setHistoryIndex(newIndex);
+            const content = history[newIndex];
+            if (editorRef.current) {
+                editorRef.current.innerHTML = content;
+                setHtmlContent(content);
+                restoreCaretToEnd();
+            }
+        }
+        return;
+    }
+    
+    if (action.type === 'redo') {
+        if (historyIndex < history.length - 1) {
+            const newIndex = historyIndex + 1;
+            setHistoryIndex(newIndex);
+            const content = history[newIndex];
+            if (editorRef.current) {
+                editorRef.current.innerHTML = content;
+                setHtmlContent(content);
+                restoreCaretToEnd();
+            }
+        }
+        return;
+    }
+
     restoreSelection();
 
+    // For other actions, we perform the action and then save history
     switch (action.type) {
       case 'bold':
         document.execCommand('bold');
@@ -457,9 +531,12 @@ const RichEditor: React.FC = () => {
       }
     }
     
-    // Update internal state
+    // After action is performed, update state and save history
     if (editorRef.current) {
-        setHtmlContent(editorRef.current.innerHTML);
+        const newContent = editorRef.current.innerHTML;
+        setHtmlContent(newContent);
+        // Force an immediate save for explicit actions
+        saveHistory(newContent);
     }
     requestAnimationFrame(updateCaret);
   };
@@ -477,8 +554,21 @@ const RichEditor: React.FC = () => {
           contentEditable
           suppressContentEditableWarning
           onInput={(e) => {
-            setHtmlContent(e.currentTarget.innerHTML);
+            const val = e.currentTarget.innerHTML;
+            setHtmlContent(val);
             updateCaret();
+            
+            // Debounce history saving for typing
+            if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+            saveTimeoutRef.current = setTimeout(() => {
+                saveHistory(val);
+            }, 700);
+          }}
+          onScroll={() => {
+              updateCaret();
+              if (contextMenu.visible) {
+                  setContextMenu({ ...contextMenu, visible: false });
+              }
           }}
           
           // Added mouse listeners for Table resizing
@@ -503,7 +593,11 @@ const RichEditor: React.FC = () => {
                         position={{ x: contextMenu.x, y: contextMenu.y }}
                         onClose={() => setContextMenu({ ...contextMenu, visible: false })}
                         onSave={() => {
-                            if (editorRef.current) setHtmlContent(editorRef.current.innerHTML);
+                            if (editorRef.current) {
+                                const newContent = editorRef.current.innerHTML;
+                                setHtmlContent(newContent);
+                                saveHistory(newContent);
+                            }
                         }}
                     />
                 )}
@@ -520,7 +614,10 @@ const RichEditor: React.FC = () => {
       </div>
       
       <div className="bg-gray-50 p-2 border-t border-gray-200 text-xs text-gray-500 flex justify-between">
-         <span>Words: {htmlContent.replace(/<[^>]*>/g, '').trim().split(/\s+/).filter(w => w.length > 0).length}</span>
+         <div className="flex gap-4">
+             <span>Words: {htmlContent.replace(/<[^>]*>/g, '').trim().split(/\s+/).filter(w => w.length > 0).length}</span>
+             <span>History: {historyIndex + 1} / {history.length}</span>
+         </div>
          <span>Rich Editor Lab Active</span>
       </div>
     </div>
