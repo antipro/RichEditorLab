@@ -62,21 +62,27 @@ const RichEditor: React.FC = () => {
     tableTarget: HTMLElement | null;
   }>({ visible: false, x: 0, y: 0, type: null, target: null, tableTarget: null });
 
-  // Table Resizing State
-  const resizingRef = useRef<{
+  // Mouse Interaction State
+  const interactionRef = useRef<{
     isResizing: boolean;
-    target: HTMLElement | null;
-    type: 'col' | 'row' | null;
+    resizeTarget: HTMLElement | null;
+    resizeType: 'col' | 'row' | null;
     startX: number;
     startY: number;
     startDimension: number;
+    
+    isSelectingCells: boolean;
+    selectionStartCell: HTMLElement | null;
   }>({
     isResizing: false,
-    target: null,
-    type: null,
+    resizeTarget: null,
+    resizeType: null,
     startX: 0,
     startY: 0,
     startDimension: 0,
+    
+    isSelectingCells: false,
+    selectionStartCell: null,
   });
 
   // Initialize content once on mount
@@ -90,44 +96,29 @@ const RichEditor: React.FC = () => {
     }
   }, []);
 
-  // Save History Helper
   const saveHistory = useCallback((content: string) => {
     setHistory(prev => {
-        // If content hasn't changed from the current point in history, don't duplicate
         if (prev[historyIndex] === content) return prev;
-        
-        // Slice history up to current index and add new content
         const newHistory = [...prev.slice(0, historyIndex + 1), content];
-        
-        // Optional: limit stack size
         if (newHistory.length > 50) {
             newHistory.shift();
-            // Adjust index if we shifted
             setHistoryIndex(newHistory.length - 1);
             return newHistory;
         }
-
         setHistoryIndex(newHistory.length - 1);
         return newHistory;
     });
   }, [historyIndex]);
 
-  // Update Caret and Save Range
   const updateCaret = useCallback(() => {
     if (!editorRef.current) return;
-    
-    // Do not update caret while resizing table
-    if (resizingRef.current.isResizing) return;
+    if (interactionRef.current.isResizing || interactionRef.current.isSelectingCells) return;
 
     const selection = window.getSelection();
-    if (!selection || selection.rangeCount === 0) {
-      return; 
-    }
+    if (!selection || selection.rangeCount === 0) return;
 
-    // Check if the focus (cursor position) is inside the editor
     if (selection.focusNode && editorRef.current.contains(selection.focusNode)) {
         lastRangeRef.current = selection.getRangeAt(0).cloneRange();
-        
         const coords = getCaretCoordinates(editorRef.current);
         if (coords) {
           setCaret({ ...coords, visible: true });
@@ -137,99 +128,218 @@ const RichEditor: React.FC = () => {
     }
   }, []);
 
-  // Global Mouse Move for Resizing
+  // --- Table Selection Helpers ---
+  
+  const clearCellSelection = () => {
+      if (!editorRef.current) return;
+      editorRef.current.querySelectorAll('.selected-cell').forEach(el => {
+          el.classList.remove('selected-cell');
+      });
+  };
+
+  const getCellGridPosition = (cell: HTMLElement) => {
+      const row = cell.closest('tr');
+      if (!row) return null;
+      const table = row.closest('table');
+      if (!table) return null;
+      
+      const rowIndex = Array.from(table.rows).indexOf(row);
+      // Simple index lookup (doesn't account for colspans perfectly in complex tables but works for basic grid)
+      const colIndex = Array.from(row.children).indexOf(cell);
+      
+      return { rowIndex, colIndex, table };
+  };
+
+  const selectCells = (start: HTMLElement, end: HTMLElement) => {
+      clearCellSelection();
+      const startPos = getCellGridPosition(start);
+      const endPos = getCellGridPosition(end);
+      
+      if (!startPos || !endPos || startPos.table !== endPos.table) return;
+
+      const minRow = Math.min(startPos.rowIndex, endPos.rowIndex);
+      const maxRow = Math.max(startPos.rowIndex, endPos.rowIndex);
+      const minCol = Math.min(startPos.colIndex, endPos.colIndex);
+      const maxCol = Math.max(startPos.colIndex, endPos.colIndex);
+
+      const table = startPos.table;
+      for (let r = minRow; r <= maxRow; r++) {
+          const row = table.rows[r];
+          for (let c = minCol; c <= maxCol; c++) {
+              if (row.children[c]) {
+                  row.children[c].classList.add('selected-cell');
+              }
+          }
+      }
+      
+      // Hide native text selection to avoid confusion
+      window.getSelection()?.removeAllRanges();
+  };
+
+  const selectColumn = (cell: HTMLElement) => {
+      clearCellSelection();
+      const pos = getCellGridPosition(cell);
+      if (!pos) return;
+      
+      Array.from(pos.table.rows).forEach(row => {
+          if (row.children[pos.colIndex]) {
+              row.children[pos.colIndex].classList.add('selected-cell');
+          }
+      });
+      window.getSelection()?.removeAllRanges();
+  };
+
+  const selectRow = (cell: HTMLElement) => {
+      clearCellSelection();
+      const row = cell.closest('tr');
+      if (row) {
+          Array.from(row.children).forEach(child => child.classList.add('selected-cell'));
+      }
+      window.getSelection()?.removeAllRanges();
+  };
+
+  // --- Global Mouse Handlers ---
+
   const handleGlobalMouseMove = useCallback((e: MouseEvent) => {
-      const { isResizing, target, type, startX, startY, startDimension } = resizingRef.current;
-      if (!isResizing || !target) return;
+      const state = interactionRef.current;
+      
+      // Handle Resizing
+      if (state.isResizing && state.resizeTarget) {
+          e.preventDefault();
+          if (state.resizeType === 'col') {
+              const delta = e.clientX - state.startX;
+              const w = Math.max(30, state.startDimension + delta);
+              state.resizeTarget.style.width = `${w}px`;
+          } else if (state.resizeType === 'row') {
+              const delta = e.clientY - state.startY;
+              const h = Math.max(20, state.startDimension + delta);
+              const tr = state.resizeTarget.closest('tr');
+              if (tr) {
+                  tr.style.height = `${h}px`;
+              } else {
+                  state.resizeTarget.style.height = `${h}px`;
+              }
+          }
+          return;
+      }
 
-      e.preventDefault(); // Prevent text selection while dragging
-
-      if (type === 'col') {
-          const delta = e.clientX - startX;
-          const w = Math.max(30, startDimension + delta);
-          target.style.width = `${w}px`;
-      } else if (type === 'row') {
-          const delta = e.clientY - startY;
-          const h = Math.max(20, startDimension + delta);
-          const tr = target.closest('tr');
-          if (tr) {
-              tr.style.height = `${h}px`;
-          } else {
-              target.style.height = `${h}px`;
+      // Handle Cell Selection Drag
+      if (state.isSelectingCells && state.selectionStartCell) {
+          const target = e.target as HTMLElement;
+          const cell = target.closest('td, th') as HTMLElement;
+          if (cell && editorRef.current?.contains(cell)) {
+             selectCells(state.selectionStartCell, cell);
           }
       }
   }, []);
 
-  // Global Mouse Up for Resizing
   const handleGlobalMouseUp = useCallback(() => {
-      if (resizingRef.current.isResizing) {
-          resizingRef.current.isResizing = false;
-          resizingRef.current.target = null;
-          resizingRef.current.type = null;
+      const state = interactionRef.current;
+      
+      if (state.isResizing) {
+          state.isResizing = false;
+          state.resizeTarget = null;
+          state.resizeType = null;
           document.body.style.cursor = 'default';
-          
           if (editorRef.current) {
              editorRef.current.style.cursor = 'text';
              const content = editorRef.current.innerHTML;
              setHtmlContent(content);
              saveHistory(content);
           }
-          
-          document.removeEventListener('mousemove', handleGlobalMouseMove);
-          document.removeEventListener('mouseup', handleGlobalMouseUp);
       }
+
+      if (state.isSelectingCells) {
+          state.isSelectingCells = false;
+          state.selectionStartCell = null;
+      }
+      
+      document.removeEventListener('mousemove', handleGlobalMouseMove);
+      document.removeEventListener('mouseup', handleGlobalMouseUp);
   }, [handleGlobalMouseMove, saveHistory]);
 
-  // Editor Mouse Interactions (Hover detection & Start Drag)
+  // --- Editor Mouse Handlers ---
+
   const handleEditorMouseMove = (e: React.MouseEvent) => {
-      if (resizingRef.current.isResizing) return;
+      if (interactionRef.current.isResizing || interactionRef.current.isSelectingCells) return;
 
       const target = e.target as HTMLElement;
-      // Only check TD/TH inside the editor
-      if ((target.tagName !== 'TD' && target.tagName !== 'TH') || !editorRef.current?.contains(target)) {
+      
+      // We only care about interactions within tables
+      const cell = target.closest('td, th') as HTMLElement;
+      if (!cell || !editorRef.current?.contains(cell)) {
           if (editorRef.current && editorRef.current.style.cursor !== 'text') {
               editorRef.current.style.cursor = 'text';
           }
           return;
       }
 
-      const rect = target.getBoundingClientRect();
-      // Sensitivity area in pixels
-      const threshold = 5; 
-      const onRightEdge = Math.abs(e.clientX - rect.right) <= threshold;
-      const onBottomEdge = Math.abs(e.clientY - rect.bottom) <= threshold;
+      const rect = cell.getBoundingClientRect();
+      const offsetX = e.clientX - rect.left;
+      const offsetY = e.clientY - rect.top;
+      
+      // Zones
+      const borderThreshold = 5;
+      const cornerThreshold = 10;
+      
+      const onRightEdge = Math.abs(e.clientX - rect.right) <= borderThreshold;
+      const onBottomEdge = Math.abs(e.clientY - rect.bottom) <= borderThreshold;
+      
+      const inCorner = offsetX < cornerThreshold && offsetY < cornerThreshold;
+      const inTopZone = offsetY <= borderThreshold && !inCorner; // avoid conflict
+      const inLeftZone = offsetX <= borderThreshold && !inCorner;
 
+      // Cursor Logic
       if (onRightEdge) {
           editorRef.current!.style.cursor = 'col-resize';
       } else if (onBottomEdge) {
           editorRef.current!.style.cursor = 'row-resize';
+      } else if (inCorner) {
+          editorRef.current!.style.cursor = 'cell'; // Indicates selection
+      } else if (inTopZone) {
+          const row = cell.closest('tr');
+          const table = cell.closest('table');
+          const isFirstRow = row && table && table.rows[0] === row;
+          
+          if (isFirstRow) editorRef.current!.style.cursor = 's-resize';
+          else editorRef.current!.style.cursor = 'text';
+      } else if (inLeftZone) {
+           // Left of row
+          const row = cell.closest('tr');
+          const isFirstCell = row && row.children[0] === cell;
+          
+          if (isFirstCell) editorRef.current!.style.cursor = 'e-resize';
+          else editorRef.current!.style.cursor = 'text';
       } else {
           editorRef.current!.style.cursor = 'text';
       }
   };
 
   const handleEditorMouseDown = (e: React.MouseEvent) => {
-      // Hide context menu on left click
+      // Ignore right clicks (button 2) in mousedown to let context menu logic handle selection
+      if (e.button === 2) return;
+
       if (contextMenu.visible) {
           setContextMenu({ ...contextMenu, visible: false });
       }
 
       const cursor = editorRef.current?.style.cursor;
-      
+      const target = e.target as HTMLElement;
+      const cell = target.closest('td, th') as HTMLElement;
+
+      // 1. Resizing
       if (cursor === 'col-resize' || cursor === 'row-resize') {
           e.preventDefault(); 
           e.stopPropagation();
-
-          const target = e.target as HTMLElement;
-          const isCol = cursor === 'col-resize';
           
-          resizingRef.current = {
+          interactionRef.current = {
+              ...interactionRef.current,
               isResizing: true,
-              target,
-              type: isCol ? 'col' : 'row',
+              resizeTarget: cell,
+              resizeType: cursor === 'col-resize' ? 'col' : 'row',
               startX: e.clientX,
               startY: e.clientY,
-              startDimension: isCol ? target.offsetWidth : (target.closest('tr')?.offsetHeight || target.offsetHeight)
+              startDimension: cursor === 'col-resize' ? cell.offsetWidth : (cell.closest('tr')?.offsetHeight || cell.offsetHeight)
           };
 
           document.body.style.cursor = cursor;
@@ -238,15 +348,56 @@ const RichEditor: React.FC = () => {
           return;
       }
 
-      // Normal click: Update caret
+      // 2. Selection (Row/Col/Corner)
+      if (cell) {
+          if (cursor === 's-resize') {
+              e.preventDefault(); // Stop text cursor
+              selectColumn(cell);
+              return;
+          }
+          if (cursor === 'e-resize') {
+              e.preventDefault();
+              selectRow(cell);
+              return;
+          }
+          if (cursor === 'cell') {
+              e.preventDefault();
+              
+              // Multi-select support
+              if (e.ctrlKey || e.metaKey) {
+                  if (cell.classList.contains('selected-cell')) {
+                      cell.classList.remove('selected-cell');
+                  } else {
+                      cell.classList.add('selected-cell');
+                  }
+                  return;
+              }
+
+              // Start Drag Selection
+              clearCellSelection();
+              cell.classList.add('selected-cell');
+              
+              interactionRef.current = {
+                  ...interactionRef.current,
+                  isSelectingCells: true,
+                  selectionStartCell: cell
+              };
+              
+              document.addEventListener('mousemove', handleGlobalMouseMove);
+              document.addEventListener('mouseup', handleGlobalMouseUp);
+              return;
+          }
+      }
+      
+      // Normal click inside content: clear special selection
+      clearCellSelection();
       requestAnimationFrame(updateCaret);
   };
 
   const handleContextMenu = (e: React.MouseEvent) => {
     const target = e.target as HTMLElement;
-    e.preventDefault(); // Prevent default browser context menu
+    e.preventDefault(); 
     
-    // Check if the target is an editable form control
     if (['INPUT', 'SELECT', 'BUTTON'].includes(target.tagName)) {
         setContextMenu({
             visible: true,
@@ -257,8 +408,32 @@ const RichEditor: React.FC = () => {
             tableTarget: null
         });
     } else {
-        // Show text context menu, potentially with table context
         const cell = target.closest('td, th') as HTMLElement | null;
+        
+        // Handle selection logic for Right Click
+        if (cell) {
+            const isSelected = cell.classList.contains('selected-cell');
+            
+            if (e.ctrlKey || e.metaKey) {
+                // Multi-select with modifier: Add to selection if not present
+                if (!isSelected) {
+                    cell.classList.add('selected-cell');
+                }
+                // Do NOT clear others
+            } else {
+                // Normal right click
+                if (!isSelected) {
+                    // Right clicking unselected cell -> Clear others
+                    clearCellSelection();
+                    // We don't force select this one visually unless we want to
+                    // but logic in TextContextMenu uses tableTarget as fallback.
+                    // However, to be consistent with 'selected-cell' logic:
+                    // cell.classList.add('selected-cell'); 
+                    // Let's stick to existing behavior where it just provides context for that cell.
+                }
+            }
+        }
+
         setContextMenu({
             visible: true,
             x: e.clientX,
@@ -281,6 +456,7 @@ const RichEditor: React.FC = () => {
     };
   }, [updateCaret, handleGlobalMouseMove, handleGlobalMouseUp]);
 
+  // --- Reuse existing helpers ---
   const restoreSelection = () => {
       editorRef.current?.focus();
       const selection = window.getSelection();
@@ -305,16 +481,9 @@ const RichEditor: React.FC = () => {
   const getSelectionBlock = (): HTMLElement | null => {
       const selection = window.getSelection();
       if (!selection || selection.rangeCount === 0) return null;
-      
       let node: Node | null = selection.anchorNode;
       if (!node) return null;
-      
-      // If node is text, get parent
-      if (node.nodeType === Node.TEXT_NODE) {
-          node = node.parentNode;
-      }
-      
-      // Traverse up to find a block element inside the editor
+      if (node.nodeType === Node.TEXT_NODE) node = node.parentNode;
       let current = node as HTMLElement;
       while (current && current !== editorRef.current) {
           const display = window.getComputedStyle(current).display;
@@ -323,25 +492,21 @@ const RichEditor: React.FC = () => {
           }
           current = current.parentElement as HTMLElement;
       }
-      
       return null;
   };
 
   const applyStyleToBlock = (styleProp: keyof CSSStyleDeclaration, value: string) => {
       let block = getSelectionBlock();
       if (!block) {
-          // If no block found (e.g. at root text node), wrap in Paragraph first
           document.execCommand('formatBlock', false, 'p');
           block = getSelectionBlock();
       }
-      
       if (block) {
           (block.style as any)[styleProp] = value;
       }
   };
 
   const handleAction = (action: EditorAction) => {
-    // For Undo/Redo we handle history navigation differently
     if (action.type === 'undo') {
         if (historyIndex > 0) {
             const newIndex = historyIndex - 1;
@@ -372,70 +537,29 @@ const RichEditor: React.FC = () => {
 
     restoreSelection();
 
-    // For other actions, we perform the action and then save history
     switch (action.type) {
-      case 'bold':
-        document.execCommand('bold');
-        break;
-      case 'italic':
-        document.execCommand('italic');
-        break;
-      case 'underline':
-        document.execCommand('underline');
-        break;
-      
-      case 'fore-color':
-        document.execCommand('foreColor', false, action.payload);
-        break;
-      case 'back-color':
-        // 'hiliteColor' is standard for text background color in contentEditable
-        document.execCommand('hiliteColor', false, action.payload);
-        break;
-
-      case 'set-font-size':
-        document.execCommand('fontSize', false, action.payload);
-        break;
-
-      case 'align-left':
-        document.execCommand('justifyLeft');
-        break;
-      case 'align-center':
-        document.execCommand('justifyCenter');
-        break;
-      case 'align-right':
-        document.execCommand('justifyRight');
-        break;
-      
-      case 'set-line-height':
-        if (action.payload) {
-            applyStyleToBlock('lineHeight', action.payload);
-        }
-        break;
-        
-      case 'set-paragraph-gap':
-        if (action.payload) {
-            applyStyleToBlock('marginBottom', action.payload);
-        }
-        break;
-      
-      case 'format-block':
-        if (action.payload) {
-            document.execCommand('formatBlock', false, `<${action.payload}>`);
-        }
-        break;
-
+      case 'bold': document.execCommand('bold'); break;
+      case 'italic': document.execCommand('italic'); break;
+      case 'underline': document.execCommand('underline'); break;
+      case 'fore-color': document.execCommand('foreColor', false, action.payload); break;
+      case 'back-color': document.execCommand('hiliteColor', false, action.payload); break;
+      case 'set-font-size': document.execCommand('fontSize', false, action.payload); break;
+      case 'align-left': document.execCommand('justifyLeft'); break;
+      case 'align-center': document.execCommand('justifyCenter'); break;
+      case 'align-right': document.execCommand('justifyRight'); break;
+      case 'set-line-height': if (action.payload) applyStyleToBlock('lineHeight', action.payload); break;
+      case 'set-paragraph-gap': if (action.payload) applyStyleToBlock('marginBottom', action.payload); break;
+      case 'format-block': if (action.payload) document.execCommand('formatBlock', false, `<${action.payload}>`); break;
       case 'horizontal-rule': {
           const hr = document.createElement('hr');
           hr.className = 'my-4 border-gray-300';
           insertNodeAtCaret(hr);
           break;
       }
-      
       case 'input-text': {
         const input = document.createElement('input');
         input.type = 'text';
         input.placeholder = 'Type here...';
-        // Force light color scheme to prevent dark mode from making this black-on-black
         input.style.colorScheme = 'light';
         input.className = 'bg-white text-gray-900 border border-gray-300 rounded px-2 py-1 text-sm focus:border-blue-500 focus:outline-none shadow-sm';
         input.onkeydown = (e) => e.stopPropagation(); 
@@ -443,22 +567,18 @@ const RichEditor: React.FC = () => {
         insertNodeAtCaret(wrapper);
         break;
       }
-
       case 'input-checkbox': {
         const checkbox = document.createElement('input');
         checkbox.type = 'checkbox';
-        // IMPORTANT: Force light scheme so the checkmark and border are visible on white bg
         checkbox.style.colorScheme = 'light';
         checkbox.className = 'w-4 h-4 text-blue-600 rounded focus:ring-blue-500 border-gray-300 bg-white align-middle';
         const wrapper = createAtomicWrapper(checkbox);
         insertNodeAtCaret(wrapper);
         break;
       }
-
       case 'input-radio': {
         const radio = document.createElement('input');
         radio.type = 'radio';
-        // Give a default name so they can interact as a group in a demo context
         radio.name = 'editor-radio-group';
         radio.style.colorScheme = 'light';
         radio.className = 'w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500 bg-white align-middle';
@@ -466,27 +586,21 @@ const RichEditor: React.FC = () => {
         insertNodeAtCaret(wrapper);
         break;
       }
-
       case 'input-select': {
         const select = document.createElement('select');
         select.style.colorScheme = 'light';
         select.className = 'bg-white text-gray-900 border border-gray-300 rounded px-2 py-1 text-sm focus:border-blue-500 focus:outline-none shadow-sm';
-        
         ['Option 1', 'Option 2', 'Option 3'].forEach(text => {
             const option = document.createElement('option');
             option.value = text;
             option.text = text;
             select.appendChild(option);
         });
-
-        // Prevent editor keystrokes while focused on select
         select.onkeydown = (e) => e.stopPropagation();
-        
         const wrapper = createAtomicWrapper(select);
         insertNodeAtCaret(wrapper);
         break;
       }
-
       case 'input-button': {
         const btn = document.createElement('button');
         btn.innerText = 'Click Me';
@@ -497,36 +611,26 @@ const RichEditor: React.FC = () => {
         insertNodeAtCaret(wrapper);
         break;
       }
-
       case 'image': {
-        // action.payload should be a base64 string from the file reader
         if (action.payload && typeof action.payload === 'string') {
           const img = document.createElement('img');
           img.src = action.payload;
           img.className = 'max-w-full h-auto rounded shadow-lg my-2 border border-gray-200';
-          // NOTE: We do not force display: block here anymore to ensure the wrapper 
-          // (which is inline-block) handles it like a character. 
-          // The max-w-full will handle sizing.
-          
           const wrapper = createAtomicWrapper(img);
-          // wrapper is naturally inline-block via 'editor-atomic' class
           insertNodeAtCaret(wrapper);
         }
         break;
       }
-
       case 'table': {
         const { rows, cols } = action.payload || { rows: 3, cols: 3 };
         const table = document.createElement('table');
         table.className = 'w-full text-sm text-left text-gray-500 my-4 border-collapse border border-gray-200 bg-white';
-        
         const tbody = document.createElement('tbody');
         for (let i = 0; i < rows; i++) {
           const tr = document.createElement('tr');
           for (let j = 0; j < cols; j++) {
             const td = document.createElement('td');
             td.className = 'border border-gray-300 p-2 min-w-[50px] h-8';
-            // Use <br> to ensure cell has height but is empty
             td.innerHTML = '<br>';
             tr.appendChild(td);
           }
@@ -538,11 +642,9 @@ const RichEditor: React.FC = () => {
       }
     }
     
-    // After action is performed, update state and save history
     if (editorRef.current) {
         const newContent = editorRef.current.innerHTML;
         setHtmlContent(newContent);
-        // Force an immediate save for explicit actions
         saveHistory(newContent);
     }
     requestAnimationFrame(updateCaret);
@@ -564,8 +666,6 @@ const RichEditor: React.FC = () => {
             const val = e.currentTarget.innerHTML;
             setHtmlContent(val);
             updateCaret();
-            
-            // Debounce history saving for typing
             if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
             saveTimeoutRef.current = setTimeout(() => {
                 saveHistory(val);
@@ -577,19 +677,14 @@ const RichEditor: React.FC = () => {
                   setContextMenu({ ...contextMenu, visible: false });
               }
           }}
-          
-          // Added mouse listeners for Table resizing
           onMouseMove={handleEditorMouseMove}
           onMouseDown={handleEditorMouseDown}
           onContextMenu={handleContextMenu}
-
           onKeyDown={() => requestAnimationFrame(updateCaret)}
           onKeyUp={() => requestAnimationFrame(updateCaret)}
           onClick={() => requestAnimationFrame(updateCaret)}
           onFocus={() => requestAnimationFrame(updateCaret)}
-          onBlur={() => {
-              // Intentionally left empty to allow toolbar interactions to reuse lastRangeRef
-          }}
+          onBlur={() => {}}
         />
         
         {contextMenu.visible && (

@@ -32,11 +32,22 @@
         border-collapse: collapse;
         width: 100%;
         margin: 1em 0;
+        table-layout: fixed; /* Better for resizing */
       }
       .prose-editor td, .prose-editor th {
         border: 1px solid #d1d5db;
         padding: 0.5em;
+        position: relative; /* For positioning context if needed */
       }
+
+      /* Table Cell Selection Styles */
+      .prose-editor td.selected-cell, .prose-editor th.selected-cell {
+        background-color: rgba(59, 130, 246, 0.2) !important; /* blue-100 with opacity */
+        border: 1px double #3b82f6 !important; /* blue-500 */
+        position: relative;
+      }
+      
+      /* Selection overlay patterns could go here if needed */
     </style>
   <script type="importmap">
 {
