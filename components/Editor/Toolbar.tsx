@@ -21,7 +21,8 @@ import {
   Highlighter,
   ALargeSmall,
   Undo,
-  Redo
+  Redo,
+  Minus
 } from 'lucide-react';
 import { EditorAction } from '../../types';
 
@@ -227,6 +228,12 @@ const Toolbar: React.FC<ToolbarProps> = ({ onAction }) => {
             icon={TableIcon} 
             label="Table" 
             onClick={() => onAction({ type: 'table', payload: { rows: 3, cols: 3 } })} 
+        />
+        
+        <Button 
+            tool="horizontal-rule"
+            icon={Minus} 
+            label="Line" 
         />
       </div>
 

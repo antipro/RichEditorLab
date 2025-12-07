@@ -22,6 +22,7 @@ export type EditorTool =
   | 'set-line-height'
   | 'set-paragraph-gap'
   | 'format-block'
+  | 'horizontal-rule'
   | 'image'
   | 'table'
   | 'input-text'

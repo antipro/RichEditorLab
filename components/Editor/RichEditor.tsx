@@ -423,6 +423,13 @@ const RichEditor: React.FC = () => {
             document.execCommand('formatBlock', false, `<${action.payload}>`);
         }
         break;
+
+      case 'horizontal-rule': {
+          const hr = document.createElement('hr');
+          hr.className = 'my-4 border-gray-300';
+          insertNodeAtCaret(hr);
+          break;
+      }
       
       case 'input-text': {
         const input = document.createElement('input');
